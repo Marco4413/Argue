@@ -1,0 +1,5 @@
+[*.sh]
+end_of_line = lf
+
+[cxxflags.txt]
+end_of_line = lf
