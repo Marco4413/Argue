@@ -32,6 +32,7 @@ OTHER DEALINGS IN THE SOFTWARE.
 #ifndef _ARGUE_HPP
 #define _ARGUE_HPP
 
+#include <cinttypes>
 #include <stack>
 #include <string>
 #include <string_view>
