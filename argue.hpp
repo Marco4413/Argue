@@ -1283,7 +1283,7 @@ bool Argue::FlagOption::ParseArg(std::string_view arg, bool isShort)
 
 bool Argue::IntOption::ParseValue(std::string_view val)
 {
-    int64_t value;
+    int64_t value = m_Default;
     auto result = std::from_chars(&val.front(), &val.back()+1, value, 10);
     if (result.ptr != &val.back()+1)
         return SetError(s("Expected integer for '", GetParser().GetPrefix(), GetName(), "', got '", val, "'."));
