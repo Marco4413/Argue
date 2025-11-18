@@ -147,6 +147,8 @@ namespace Argue
         ARGUE_DELETE_MOVE_COPY(IOption)
 
         const std::string& GetName() const { return m_Name; }
+
+        bool HasShortName() const { return !m_ShortName.empty(); }
         const std::string& GetShortName() const { return m_ShortName; }
 
         bool HasMetaVar() const { return !m_MetaVar.empty(); }
@@ -156,8 +158,6 @@ namespace Argue
         const std::string& GetDescription() const { return m_Description; }
 
         const IArgParser& GetParser() const { return m_Parser; }
-
-        bool HasShortName() const { return !m_ShortName.empty(); }
 
         operator bool() const { return HasValue(); }
 
@@ -335,7 +335,7 @@ namespace Argue
 
         virtual const std::string& GetPrefix() const = 0;
         virtual const std::string& GetShortPrefix() const = 0;
-        virtual bool HasShortPrefix() const { return GetShortPrefix().length() > 0; }
+        virtual bool HasShortPrefix() const { return !GetShortPrefix().empty(); }
 
     public: // The following methods are called by constructors
         void AddOption(IOption& opt)
@@ -352,6 +352,9 @@ namespace Argue
         {
             m_Arguments.emplace_back(&arg);
         }
+
+    protected:
+        virtual bool CheckOptionsAndArguments();
 
     private:
         bool m_WasUsed = false;
@@ -1149,23 +1152,27 @@ bool Argue::IArgParser::Parse(std::stack<std::string_view> args)
     bool isParsingPositionals = false;
     size_t positionalIdx = 0;
     for (; !args.empty(); args.pop()) {
-        std::string_view fullArg = args.top();
-        std::string_view arg = fullArg;
+        std::string_view argWithPrefix = args.top();
+        std::string_view arg = argWithPrefix;
 
-        bool isShortPrefix = false;
         if (isParsingPositionals) {
             if (positionalIdx >= m_Arguments.size())
-                return SetError(s("Unexpected positional argument '", fullArg, "'."));
+                return SetError(s("Unexpected positional argument '", argWithPrefix, "'."));
             IPositionalArgument* positional = m_Arguments[positionalIdx];
             if (!positional->Parse(arg))
                 return false;
             if (!positional->IsVariadic())
                 ++positionalIdx;
             continue;
-        } else if (arg == "--") {
+        }
+
+        if (arg == "--") {
             isParsingPositionals = true;
             continue;
-        } else if (arg.starts_with(GetPrefix())) {
+        }
+
+        bool isShortPrefix = false;
+        if (arg.starts_with(GetPrefix())) {
             arg.remove_prefix(GetPrefix().length());
             isShortPrefix = false;
         } else if (HasShortPrefix() && arg.starts_with(GetShortPrefix())) {
@@ -1175,22 +1182,18 @@ bool Argue::IArgParser::Parse(std::stack<std::string_view> args)
             // Try Parse Commands
             for (IArgParser* cmd : m_Commands) {
                 if (cmd->Parse(args))
-                    return true;
+                    return CheckOptionsAndArguments() && !HasError();
                 if (cmd->HasError())
                     return false;
             }
 
+            // Duplicate arg so that it will be parsed on the next iteration as positional
             isParsingPositionals = true;
-            if (positionalIdx >= m_Arguments.size())
-                return SetError(s("Unexpected positional argument '", fullArg, "'."));
-            IPositionalArgument* positional = m_Arguments[positionalIdx];
-            if (!positional->Parse(arg))
-                return false;
-            if (!positional->IsVariadic())
-                ++positionalIdx;
+            args.push(args.top());
             continue;
         }
 
+        // Parse options
         bool hasParsedOption = false;
         for (IOption* opt : m_Options) {
             if (opt->Parse(arg, isShortPrefix)) {
@@ -1201,6 +1204,8 @@ bool Argue::IArgParser::Parse(std::stack<std::string_view> args)
             if (HasError())
                 return false;
 
+            // If prefixes are equal, long prefix is preferred.
+            // Try parsing again but as if the short prefix was used.
             if (arePrefixesTheSame) {
                 if (opt->Parse(arg, !isShortPrefix)) {
                     hasParsedOption = true;
@@ -1213,21 +1218,28 @@ bool Argue::IArgParser::Parse(std::stack<std::string_view> args)
         }
 
         if (!hasParsedOption) {
-            return SetError(s("Unknown option '", fullArg, "'."));
+            return SetError(s("Unknown option '", argWithPrefix, "'."));
         }
     }
 
+    return CheckOptionsAndArguments() && !HasError();
+}
+
+bool Argue::IArgParser::CheckOptionsAndArguments()
+{
     for (const IOption* opt : m_Options) {
-        if (!opt->HasValue())
-            return SetError(s("Missing option '", GetPrefix(), opt->GetName(), "'."));
+        if (!opt->HasValue()) {
+            return SetError(s("Missing option '", GetPrefix(), opt->GetName(), "' to '", GetName(), "'."));
+        }
     }
 
     for (const IPositionalArgument* arg : m_Arguments) {
-        if (!arg->HasValue())
-            return SetError(s("Missing argument '", arg->GetMetaVar(), "'."));
+        if (!arg->HasValue()) {
+            return SetError(s("Missing argument '", arg->GetMetaVar(), "' to '", GetName(), "'."));
+        }
     }
 
-    return !HasError();
+    return true;
 }
 
 void Argue::FlagOption::WriteHint(ITextBuilder& hint) const
